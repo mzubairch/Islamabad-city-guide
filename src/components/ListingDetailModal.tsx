@@ -22,9 +22,38 @@ import {
   ChevronRight,
   Camera,
   Maximize2,
-  Image as ImageIcon
+  Image as ImageIcon,
+  Compass,
+  ArrowRight
 } from 'lucide-react';
 import { Listing, Review } from '../types';
+
+function calculateDistanceKm(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number
+): number {
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const R = 6371;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) *
+      Math.sin(dLng / 2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function formatDistanceLabel(km: number): string {
+  if (!Number.isFinite(km)) return '';
+  if (km < 1) {
+    return `${Math.max(50, Math.round((km * 1000) / 50) * 50)} m`;
+  }
+  return `${km.toFixed(1)} km`;
+}
 
 interface ListingDetailModalProps {
   listing: Listing | null;
@@ -57,7 +86,9 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   const [copiedShare, setCopiedShare] = useState(false);
   const [activeImageIndex, setActiveImageIndex] = useState<number>(0);
   const [fullscreenImage, setFullscreenImage] = useState<string | null>(null);
+  const [nearbyFilter, setNearbyFilter] = useState<'all' | 'sector' | 'category'>('all');
   const galleryScrollRef = React.useRef<HTMLDivElement>(null);
+  const modalScrollRef = React.useRef<HTMLDivElement>(null);
 
   const allImages = React.useMemo(() => {
     if (!listing) return [];
@@ -89,15 +120,23 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
     if (listing) {
       setActiveImageIndex(0);
       setFullscreenImage(null);
-      // Fetch reviews for listing
-      fetch(`/api/reviews/${listing.id}`)
-        .then(res => res.json())
+      setNearbyFilter('all');
+      modalScrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+      // Fetch reviews for listing (skipped gracefully on static hosting)
+      fetch(`./api/reviews/${listing.id}`)
+        .then(res => {
+          const ct = res.headers.get('content-type') || '';
+          if (!res.ok || !ct.includes('application/json')) return null;
+          return res.json();
+        })
         .then(data => {
-          if (data.success) {
+          if (data?.success && Array.isArray(data.data)) {
             setReviews(data.data);
+          } else {
+            setReviews([]);
           }
         })
-        .catch(err => console.error('Failed to fetch reviews:', err));
+        .catch(() => setReviews([]));
       
       setCorrectionMode(false);
       setCorrectionSent(false);
@@ -105,11 +144,67 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
     }
   }, [listing]);
 
-  if (!listing) return null;
+  const nearbyCandidates = React.useMemo(() => {
+    if (!listing) return [];
+    const curSector = listing.sector.trim().toLowerCase();
+    return allListings
+      .filter((l) => l.id !== listing.id)
+      .map((l) => {
+        const isSameSector = l.sector.trim().toLowerCase() === curSector;
+        const isSameCategory = l.category === listing.category;
+        const distanceKm = calculateDistanceKm(
+          listing.coordinates.lat,
+          listing.coordinates.lng,
+          l.coordinates.lat,
+          l.coordinates.lng
+        );
+        // Prioritize same sector & same category, then close physical proximity
+        const relevanceScore =
+          (isSameSector ? 100 : 0) +
+          (isSameCategory ? 60 : 0) +
+          (distanceKm <= 3 ? 35 : distanceKm <= 6 ? 15 : 0) -
+          distanceKm;
+        return {
+          listing: l,
+          isSameSector,
+          isSameCategory,
+          distanceKm,
+          relevanceScore
+        };
+      })
+      .filter(
+        (item) => item.isSameSector || item.isSameCategory || item.distanceKm <= 5
+      )
+      .sort((a, b) => b.relevanceScore - a.relevanceScore);
+  }, [allListings, listing]);
 
-  const nearbyInSector = allListings.filter(
-    l => l.sector === listing.sector && l.id !== listing.id
-  ).slice(0, 3);
+  const sameSectorCount = React.useMemo(
+    () => nearbyCandidates.filter((i) => i.isSameSector).length,
+    [nearbyCandidates]
+  );
+
+  const sameCategoryCount = React.useMemo(
+    () => nearbyCandidates.filter((i) => i.isSameCategory).length,
+    [nearbyCandidates]
+  );
+
+  const displayedNearby = React.useMemo(() => {
+    if (nearbyFilter === 'sector') {
+      return nearbyCandidates
+        .filter((i) => i.isSameSector)
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .slice(0, 6);
+    }
+    if (nearbyFilter === 'category') {
+      return nearbyCandidates
+        .filter((i) => i.isSameCategory)
+        .sort((a, b) => a.distanceKm - b.distanceKm)
+        .slice(0, 6);
+    }
+    return nearbyCandidates.slice(0, 6);
+  }, [nearbyCandidates, nearbyFilter]);
+
+  if (!listing) return null;
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -167,6 +262,7 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-black/70 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4 md:p-6 animate-fade-in">
       <div 
+        ref={modalScrollRef}
         className="bg-white rounded-3xl max-w-4xl w-full max-h-[92vh] overflow-y-auto shadow-2xl border border-slate-200 relative flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
@@ -674,24 +770,115 @@ export const ListingDetailModal: React.FC<ListingDetailModalProps> = ({
             </div>
           </div>
 
-          {/* Related Nearby Places in the same Sector */}
-          {nearbyInSector.length > 0 && (
-            <div className="space-y-3 pt-4 border-t border-slate-200">
-              <h4 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-                Other Verified Places in Sector {listing.sector}
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                {nearbyInSector.map((near) => (
+          {/* Nearby & Related Places (Same Sector, Same Category, or Close Proximity) */}
+          {nearbyCandidates.length > 0 && (
+            <div className="space-y-4 pt-6 border-t border-slate-200">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Compass className="w-4 h-4 text-emerald-600" />
+                    <span>Nearby & Related Places</span>
+                  </h4>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Explore verified spots in Sector {listing.sector}, in {listing.category}, or within 5 km.
+                  </p>
+                </div>
+
+                {/* Filter Tabs */}
+                <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setNearbyFilter('all')}
+                    className={`px-3 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+                      nearbyFilter === 'all'
+                        ? 'bg-emerald-700 text-white shadow-2xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    All Relevant ({Math.min(6, nearbyCandidates.length)})
+                  </button>
+                  {sameSectorCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setNearbyFilter('sector')}
+                      className={`px-3 py-1.5 rounded-xl font-bold transition-colors cursor-pointer ${
+                        nearbyFilter === 'sector'
+                          ? 'bg-emerald-700 text-white shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      Sector {listing.sector} ({sameSectorCount})
+                    </button>
+                  )}
+                  {sameCategoryCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setNearbyFilter('category')}
+                      className={`px-3 py-1.5 rounded-xl font-bold capitalize transition-colors cursor-pointer ${
+                        nearbyFilter === 'category'
+                          ? 'bg-emerald-700 text-white shadow-2xs'
+                          : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                      }`}
+                    >
+                      {listing.category} ({sameCategoryCount})
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+                {displayedNearby.map(({ listing: near, isSameSector, isSameCategory, distanceKm }) => (
                   <div
                     key={near.id}
                     onClick={() => onSelectListing(near)}
-                    className="p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-white hover:border-emerald-500 transition-all cursor-pointer space-y-1"
+                    className="group rounded-2xl border border-slate-200 bg-slate-50/70 hover:bg-white hover:border-emerald-500 hover:shadow-md transition-all cursor-pointer overflow-hidden flex flex-col"
                   >
-                    <p className="font-bold text-xs text-slate-900 line-clamp-1">{near.name}</p>
-                    <p className="text-[11px] text-slate-500 line-clamp-1">{near.subcategory}</p>
-                    <div className="flex items-center justify-between text-[11px] pt-1">
-                      <span className="text-emerald-700 font-semibold">{near.sector}</span>
-                      <span className="text-amber-500 font-bold">★ {near.rating.toFixed(1)}</span>
+                    <div className="relative h-28 w-full bg-slate-200 overflow-hidden">
+                      <img
+                        src={near.featuredImage}
+                        alt={near.name}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                        loading="lazy"
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent pointer-events-none" />
+                      <span className="absolute top-2 right-2 px-2 py-0.5 rounded-md bg-black/70 text-white text-[10px] font-bold backdrop-blur-xs">
+                        {formatDistanceLabel(distanceKm)} away
+                      </span>
+                      <div className="absolute bottom-2 left-2 flex flex-wrap gap-1">
+                        {isSameSector && (
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-600 text-white text-[10px] font-bold">
+                            Same Sector
+                          </span>
+                        )}
+                        {isSameCategory && (
+                          <span className="px-2 py-0.5 rounded-md bg-indigo-600 text-white text-[10px] font-bold">
+                            Same Category
+                          </span>
+                        )}
+                        {!isSameSector && !isSameCategory && (
+                          <span className="px-2 py-0.5 rounded-md bg-sky-600 text-white text-[10px] font-bold">
+                            Nearby
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="p-3 space-y-1 flex-1 flex flex-col justify-between">
+                      <div>
+                        <p className="font-bold text-xs text-slate-900 group-hover:text-emerald-700 transition-colors line-clamp-1">
+                          {near.name}
+                        </p>
+                        <p className="text-[11px] text-slate-500 line-clamp-1">
+                          {near.subcategory} • Sector {near.sector}
+                        </p>
+                      </div>
+                      <div className="flex items-center justify-between text-[11px] pt-2 border-t border-slate-200/70">
+                        <span className="text-amber-500 font-bold">★ {near.rating.toFixed(1)}</span>
+                        <span className="text-emerald-700 font-semibold flex items-center gap-0.5 group-hover:translate-x-0.5 transition-transform">
+                          <span>View</span>
+                          <ArrowRight className="w-3 h-3" />
+                        </span>
+                      </div>
                     </div>
                   </div>
                 ))}
