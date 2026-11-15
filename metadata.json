@@ -1,0 +1,6 @@
+{
+  "name": "Islamabad City Guide",
+  "description": "Complete digital directory and smart city information portal for Islamabad, Pakistan - explore government institutions, universities, hospitals, hotels, shopping, restaurants, transportation, sectors, and AI assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
