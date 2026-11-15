@@ -16,6 +16,35 @@
   </head>
   <body class="bg-slate-50 text-slate-800 antialiased selection:bg-emerald-600 selection:text-white">
     <div id="root"></div>
+    <script>
+      (function () {
+        var errors = [];
+        window.addEventListener('error', function (e) {
+          var msg = e && (e.message || (e.target && (e.target.src || e.target.href)));
+          if (msg) errors.push(String(msg));
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          if (e && e.reason) errors.push(String(e.reason));
+        });
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (!root || root.children.length > 0) return;
+          var hasUnbuiltEntry = !!document.querySelector('script[src*="/src/main.tsx"]');
+          var isFileProto = window.location.protocol === 'file:';
+          var hint = isFileProto
+            ? 'You opened dist/index.html directly via file://. Browsers block ES modules over file:// — serve it with a web server (npx vite preview) or deploy to GitHub Pages.'
+            : hasUnbuiltEntry
+              ? 'GitHub Pages is serving the unbuilt source index.html (/src/main.tsx). In your GitHub repo go to Settings -> Pages -> Source and select "GitHub Actions" so the built dist/ folder is deployed.'
+              : 'The app script failed to load or execute. Check your browser Console (F12) for details.';
+          root.innerHTML =
+            '<div style="max-width:640px;margin:48px auto;padding:24px;font-family:system-ui,sans-serif;background:#fff;border:1px solid #fecdd3;border-radius:16px;color:#0f172a">' +
+            '<h2 style="margin:0 0 8px;font-size:18px;color:#be123c">Islamabad City Guide failed to start</h2>' +
+            '<p style="margin:0 0 12px;font-size:14px;line-height:1.5;color:#475569">' + hint + '</p>' +
+            (errors.length ? '<pre style="margin:0;padding:12px;background:#f8fafc;border-radius:8px;font-size:12px;overflow:auto;color:#334155">' + errors.join('\n').replace(/</g, '&lt;') + '</pre>' : '') +
+            '</div>';
+        }, 3500);
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

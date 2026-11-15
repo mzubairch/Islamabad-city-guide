@@ -72,29 +72,42 @@ export default function App() {
   const [savedIds, setSavedIds] = useState<string[]>(() => {
     try {
       const stored = localStorage.getItem('isb_saved_listings');
-      return stored ? JSON.parse(stored) : [];
+      const parsed = stored ? JSON.parse(stored) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
   });
 
-  // Fetch updated data from backend
+  // Fetch updated data from backend (gracefully skipped on static hosting like GitHub Pages)
   const fetchListings = () => {
-    fetch('/api/listings')
-      .then(r => r.json())
-      .then(d => {
-        if (d.success && d.data) setListings(d.data);
+    fetch('./api/listings')
+      .then(r => {
+        const ct = r.headers.get('content-type') || '';
+        if (!r.ok || !ct.includes('application/json')) return null;
+        return r.json();
       })
-      .catch(err => console.warn('Using initial listing data:', err));
+      .then(d => {
+        if (d?.success && d.data) setListings(d.data);
+      })
+      .catch(() => {
+        // Static hosting uses bundled INITIAL_LISTINGS
+      });
   };
 
   const fetchNews = () => {
-    fetch('/api/news')
-      .then(r => r.json())
-      .then(d => {
-        if (d.success && d.data) setNews(d.data);
+    fetch('./api/news')
+      .then(r => {
+        const ct = r.headers.get('content-type') || '';
+        if (!r.ok || !ct.includes('application/json')) return null;
+        return r.json();
       })
-      .catch(err => console.warn('Using initial news data:', err));
+      .then(d => {
+        if (d?.success && d.data) setNews(d.data);
+      })
+      .catch(() => {
+        // Static hosting uses bundled CITY_NEWS
+      });
   };
 
   useEffect(() => {
