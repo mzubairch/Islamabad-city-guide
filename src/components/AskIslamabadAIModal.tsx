@@ -14,6 +14,15 @@ import {
   ExternalLink,
   PhoneCall
 } from 'lucide-react';
+import { Listing, SectorInfo, MetroRoute, CityNewsItem, CityJobItem } from '../types';
+import {
+  INITIAL_LISTINGS,
+  SECTORS_LIST,
+  METRO_ROUTES,
+  CITY_NEWS,
+  CITY_JOBS
+} from '../data/initialData';
+import { generateLocalAssistantAnswer } from '../utils/localAssistant';
 
 interface Message {
   id: string;
@@ -26,11 +35,21 @@ interface Message {
 interface AskIslamabadAIModalProps {
   isOpen: boolean;
   onClose: () => void;
+  listings?: Listing[];
+  sectors?: SectorInfo[];
+  metroRoutes?: MetroRoute[];
+  news?: CityNewsItem[];
+  jobs?: CityJobItem[];
 }
 
 export const AskIslamabadAIModal: React.FC<AskIslamabadAIModalProps> = ({
   isOpen,
-  onClose
+  onClose,
+  listings = INITIAL_LISTINGS,
+  sectors = SECTORS_LIST,
+  metroRoutes = METRO_ROUTES,
+  news = CITY_NEWS,
+  jobs = CITY_JOBS
 }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -93,37 +112,49 @@ What would you like to know about Islamabad today?`,
     setInputQuery('');
     setLoading(true);
 
+    let answerText: string | null = null;
+    let isGrounded = true;
+
     try {
-      const res = await fetch('/api/assistant', {
+      const res = await fetch('./api/assistant', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: text })
       });
 
-      const data = await res.json();
-      if (data.success && data.answer) {
-        const assistantMsg: Message = {
-          id: `asst-${Date.now()}`,
-          role: 'assistant',
-          content: data.answer,
-          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-          isGrounded: data.grounded
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-      } else {
-        throw new Error('No answer received');
+      const contentType = res.headers.get('content-type') || '';
+      if (res.ok && contentType.includes('application/json')) {
+        const data = await res.json();
+        if (data?.success && data.answer) {
+          answerText = data.answer;
+          isGrounded = Boolean(data.grounded);
+        }
       }
-    } catch (err) {
-      const errorMsg: Message = {
-        id: `err-${Date.now()}`,
-        role: 'assistant',
-        content: `I'm having trouble connecting to the intelligence server right now. However, you can find verified information directly using our **Directory Search** or call the Islamabad emergency helpline **15** or CDA helpline **1819**.`,
-        time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      };
-      setMessages((prev) => [...prev, errorMsg]);
-    } finally {
-      setLoading(false);
+    } catch {
+      // Static hosting (e.g. GitHub Pages) has no /api backend; fall back to local directory engine
     }
+
+    if (!answerText) {
+      answerText = generateLocalAssistantAnswer(text, {
+        listings,
+        sectors,
+        metroRoutes,
+        news,
+        jobs
+      });
+      isGrounded = true;
+    }
+
+    const assistantMsg: Message = {
+      id: `asst-${Date.now()}`,
+      role: 'assistant',
+      content: answerText,
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      isGrounded
+    };
+
+    setMessages((prev) => [...prev, assistantMsg]);
+    setLoading(false);
   };
 
   const copyToClipboard = (id: string, text: string) => {
@@ -281,7 +312,7 @@ What would you like to know about Islamabad today?`,
           <div className="flex items-center justify-between text-[11px] text-slate-400 mt-2 px-1">
             <span className="flex items-center gap-1">
               <ShieldCheck className="w-3.5 h-3.5 text-emerald-600" />
-              Verified local database with Gemini 3.8 Flash intelligence
+              Grounded in Verified Islamabad City Guide Data
             </span>
             <button
               onClick={() => setMessages([messages[0]])}

@@ -698,6 +698,11 @@ export default function App() {
       <AskIslamabadAIModal
         isOpen={aiModalOpen}
         onClose={() => setAiModalOpen(false)}
+        listings={listings}
+        sectors={sectors}
+        metroRoutes={metroRoutes}
+        news={news}
+        jobs={jobs}
       />
 
       {/* Submit Listing Modal */}
